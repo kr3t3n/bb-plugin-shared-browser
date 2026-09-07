@@ -222,7 +222,10 @@ export default async function plugin(bb: BbPluginApi) {
   async function doStatus(input: { hostId?: string }) {
     const hostId = await resolveHostId(input.hostId);
     const state = await host.call("status", {}, { hostId });
-    const viewerUrl = await viewerUrlFor(hostId, state.viewerPort !== null);
+    const viewerUrl =
+      state.running && state.viewerPort !== null
+        ? await viewerUrlFor(hostId, true)
+        : null;
     return { state, viewerUrl, axiHint: axiHint(state.running) };
   }
 

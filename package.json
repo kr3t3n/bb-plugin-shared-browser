@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-shared-browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "On-demand shared Chromium for remote bb: human login + agent CDP control.",
   "engines": {

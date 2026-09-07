@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   definePluginApp,
   UrlLink,
@@ -8,55 +8,92 @@ import {
 import { Button } from "@/components/ui/button";
 import type { rpcContract } from "./server";
 
-function BrowserPanel() {
+type PanelStatus = {
+  state: {
+    running: boolean;
+    mode: "shared" | "headless" | null;
+    url: string | null;
+  };
+  viewerUrl: string | null;
+  axiHint: string;
+};
+
+function isNavigableUrl(value: string): boolean {
+  const v = value.trim();
+  if (!v || v === "https://" || v === "http://") return false;
+  if (v.startsWith("/")) return false;
+  return /^https?:\/\//i.test(v) || !v.includes("://");
+}
+
+function BrowserPanel({ autoStart }: { autoStart: boolean }) {
   const rpc = useRpc<typeof rpcContract>();
-  const [status, setStatus] = useState<{
-    state: {
-      running: boolean;
-      mode: "shared" | "headless" | null;
-      url: string | null;
-    };
-    viewerUrl: string | null;
-    axiHint: string;
-  } | null>(null);
+  const [status, setStatus] = useState<PanelStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [urlDraft, setUrlDraft] = useState("https://");
+  const [urlDraft, setUrlDraft] = useState("https://example.com");
+  const startedRef = useRef(false);
+
+  const openViewer = useCallback((url: string | null | undefined) => {
+    if (!url || typeof window === "undefined") return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
       const result = await rpc.call("status", {});
       setStatus(result);
       setError(null);
-      if (result.state.url) setUrlDraft(result.state.url);
+      if (result.state.url && isNavigableUrl(result.state.url)) {
+        setUrlDraft(result.state.url);
+      }
+      return result;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      return null;
     }
   }, [rpc]);
 
+  const startShared = useCallback(
+    async (opts?: { open?: boolean; url?: string }) => {
+      setBusy(true);
+      try {
+        const draft = (opts?.url ?? urlDraft).trim();
+        const url = isNavigableUrl(draft) ? draft : undefined;
+        const result = await rpc.call("start", {
+          mode: "shared",
+          url,
+        });
+        setStatus(result);
+        setError(null);
+        // Only open from a direct user click — browsers block popup after await.
+        if (opts?.open === true) openViewer(result.viewerUrl);
+        return result;
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [openViewer, rpc, urlDraft],
+  );
+
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void (async () => {
+      const current = await refresh();
+      if (!autoStart || startedRef.current) return;
+      startedRef.current = true;
+      if (current?.state.running) {
+        // Already up — still surface the viewer link; user clicks Open viewer.
+        return;
+      }
+      await startShared({ open: false });
+    })();
+  }, [autoStart, refresh, startShared]);
 
   useRealtime("shared-browser-changed", () => {
     void refresh();
   });
-
-  const startShared = async () => {
-    setBusy(true);
-    try {
-      const result = await rpc.call("start", {
-        mode: "shared",
-        url: urlDraft.trim() || undefined,
-      });
-      setStatus(result);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const stop = async () => {
     setBusy(true);
@@ -72,15 +109,18 @@ function BrowserPanel() {
 
   const navigate = async () => {
     const url = urlDraft.trim();
-    if (!url) return;
+    if (!isNavigableUrl(url)) {
+      setError("Enter a full URL like https://example.com");
+      return;
+    }
     setBusy(true);
     try {
       if (!status?.state.running) {
-        const result = await rpc.call("start", { mode: "shared", url });
-        setStatus(result);
+        await startShared({ open: true, url });
       } else {
         await rpc.call("navigate", { url });
-        await refresh();
+        const next = await refresh();
+        if (next?.viewerUrl) openViewer(next.viewerUrl);
       }
       setError(null);
     } catch (cause) {
@@ -103,14 +143,18 @@ function BrowserPanel() {
           onKeyDown={(e) => {
             if (e.key === "Enter") void navigate();
           }}
-          placeholder="https://"
+          placeholder="https://example.com"
           spellCheck={false}
         />
         <Button size="sm" disabled={busy} onClick={() => void navigate()}>
           Go
         </Button>
         {!running ? (
-          <Button size="sm" disabled={busy} onClick={() => void startShared()}>
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => void startShared({ open: true })}
+          >
             Start
           </Button>
         ) : (
@@ -126,19 +170,11 @@ function BrowserPanel() {
         <Button
           size="sm"
           variant="ghost"
-          disabled={busy}
-          onClick={() => void refresh()}
+          disabled={busy || !viewerUrl}
+          onClick={() => openViewer(viewerUrl)}
         >
-          Refresh
+          Open viewer
         </Button>
-        {viewerUrl ? (
-          <UrlLink
-            href={viewerUrl}
-            className="text-sm text-primary underline-offset-2 hover:underline"
-          >
-            Open viewer
-          </UrlLink>
-        ) : null}
       </div>
 
       {error ? (
@@ -147,32 +183,48 @@ function BrowserPanel() {
         </div>
       ) : null}
 
-      <div className="px-3 py-2 text-xs text-muted-foreground">
-        {status?.axiHint ?? "Starting…"}
-        {running ? ` · mode ${status?.state.mode}` : null}
-      </div>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
+        <div className="max-w-md space-y-2">
+          <h2 className="text-base font-medium">
+            {running ? "Shared browser is running" : "Shared browser is stopped"}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {running
+              ? "Open the viewer tab to click and log in. Agents use the same Chromium session."
+              : "Press Start (or open this panel again) to spin Chromium for login."}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {status?.axiHint ?? (busy ? "Starting…" : "")}
+          </p>
+        </div>
 
-      <div className="min-h-0 flex-1 bg-muted/30">
         {viewerUrl ? (
-          <iframe
-            title="Shared browser viewer"
-            src={viewerUrl}
-            className="h-full w-full border-0"
-            allow="clipboard-read; clipboard-write"
-          />
-        ) : (
-          <div className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
-            <div className="max-w-md space-y-3">
-              <p>
-                Press Start to spin a shared Chromium for login. Agents attach to
-                the same session. When you press Stop, agents use headless
-                Chromium again.
-              </p>
-              <Button disabled={busy} onClick={() => void startShared()}>
-                Start shared browser
-              </Button>
-            </div>
+          <div className="flex flex-col items-center gap-2">
+            <Button
+              disabled={busy}
+              onClick={() => openViewer(viewerUrl)}
+            >
+              Open viewer
+            </Button>
+            <UrlLink
+              href={viewerUrl}
+              className="break-all text-xs text-primary underline-offset-2 hover:underline"
+            >
+              {viewerUrl}
+            </UrlLink>
+            <p className="max-w-sm text-xs text-muted-foreground">
+              The viewer opens in a new tab (connect share). An iframe cannot
+              show it inside bb because the share requires your getbb.app
+              session.
+            </p>
           </div>
+        ) : (
+          <Button
+            disabled={busy}
+            onClick={() => void startShared({ open: true })}
+          >
+            {busy ? "Starting…" : "Start shared browser"}
+          </Button>
         )}
       </div>
     </div>
@@ -185,7 +237,7 @@ export default definePluginApp((app) => {
     title: "Browser",
     icon: "Globe",
     path: "browser",
-    component: () => <BrowserPanel />,
+    component: () => <BrowserPanel autoStart={false} />,
   });
 
   app.slots.threadPanelAction({
@@ -193,8 +245,8 @@ export default definePluginApp((app) => {
     title: "Open Browser",
     icon: "Globe",
     layout: "flush",
-    component: () => <BrowserPanel />,
-    run: ({ openPanel }) => {
+    component: () => <BrowserPanel autoStart />,
+    run: async ({ openPanel }) => {
       openPanel({ title: "Browser" });
     },
   });
@@ -204,8 +256,8 @@ export default definePluginApp((app) => {
     title: "Open Browser",
     icon: "Globe",
     layout: "flush",
-    component: () => <BrowserPanel />,
-    run: ({ openPanel }) => {
+    component: () => <BrowserPanel autoStart />,
+    run: async ({ openPanel }) => {
       openPanel({ title: "Browser" });
     },
   });
