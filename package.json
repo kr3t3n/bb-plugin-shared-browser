@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-shared-browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "On-demand shared Chromium for remote bb: human login + agent CDP control.",
   "engines": {
@@ -16,7 +16,9 @@
     "server": "./server.ts",
     "app": "./app.tsx",
     "host": "./host.ts",
-    "skills": ["skills"]
+    "skills": [
+      "skills"
+    ]
   },
   "scripts": {
     "build": "bb plugin build",
