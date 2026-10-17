@@ -84,6 +84,21 @@ function setAxiBrowserUrl(enabled: boolean): void {
 }
 
 export default async function plugin(bb: BbPluginApi) {
+  const settings = bb.settings.define({
+    viewerUrl: {
+      type: "string",
+      label:
+        "Private viewer URL, such as a Tailscale Serve address for port 9225 (empty uses BB Connect)",
+      default: "",
+    },
+  });
+
+  /** Operator-set private viewer address; null means use BB Connect. */
+  async function privateViewerUrl(): Promise<string | null> {
+    const value = (await settings.get()).viewerUrl?.trim();
+    return value ? value.replace(/\/$/, "") : null;
+  }
+
   bb.log.info("shared-browser loaded");
 
   const host = bb.hosts.experimental_client({
@@ -106,6 +121,9 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function viewerUrlFor(hostId: string, runningViewer: boolean): Promise<string | null> {
     if (!runningViewer) return null;
+
+    const privateUrl = await privateViewerUrl();
+    if (privateUrl) return privateUrl;
 
     // Never spawn `bb connect` from the plugin server — it deadlocks the same
     // event loop. Declare the port, then build the public URL from connect state.
@@ -176,7 +194,7 @@ export default async function plugin(bb: BbPluginApi) {
       { hostId },
     );
     setAxiBrowserUrl(true);
-    if (state.viewerPort !== null) {
+    if (state.viewerPort !== null && !(await privateViewerUrl())) {
       try {
         bb.hosts.declareSharedPorts(hostId, [VIEWER_PORT]);
       } catch {

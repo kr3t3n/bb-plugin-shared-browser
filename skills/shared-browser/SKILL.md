@@ -15,7 +15,7 @@ Remote bb has no native Browser tab. This plugin provides an on-demand shared Ch
 ## When not to use
 
 - Agent-only page fetch with no human: use `chrome-devtools-axi` alone (ephemeral headless).
-- Local HTML previews: prefer `bb connect expose` on a static/dev server.
+- Local HTML previews: serve them on the bb host with `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` (tailnet only). Use `bb connect expose` only when BB Connect is on.
 
 ## Commands
 
@@ -24,7 +24,7 @@ bb browser start --shared [url]   # headed + interactive viewer
 bb browser start --headless [url] # persistent CDP profile, no viewer
 bb browser open <url>             # shared start + navigate
 bb browser status [--json]
-bb browser url                    # viewer connect URL
+bb browser url                    # viewer URL (tailnet or connect)
 bb browser stop                   # free resources; axi returns to ephemeral headless
 ```
 

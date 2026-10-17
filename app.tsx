@@ -213,8 +213,8 @@ function BrowserPanel({ autoStart }: { autoStart: boolean }) {
               {viewerUrl}
             </UrlLink>
             <p className="max-w-sm text-xs text-muted-foreground">
-              The viewer opens in a new tab (connect share). An iframe cannot
-              show it inside bb because the share requires your getbb.app
+              The viewer opens in a new tab. bb cannot show it in a frame,
+              because the viewer needs your tailnet or your getbb.app
               session.
             </p>
           </div>
